@@ -365,6 +365,13 @@ static void compute_merlinpath(char merlin_path[PATHSZ], const char *argv0)
 
 static void compute_socketpath(char socket_path[PATHSZ], const char merlin_path[PATHSZ])
 {
+  const char *merlin_socket = getenv("MERLIN_SOCKET");
+  if (merlin_socket != NULL)
+  {
+    strcpy(socket_path, merlin_socket);
+    return;
+  }
+
   struct stat st;
   if (stat(merlin_path, &st) != 0)
     failwith_perror("stat (cannot find ocamlmerlin binary)");

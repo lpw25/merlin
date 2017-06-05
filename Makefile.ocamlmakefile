@@ -255,6 +255,12 @@ ifeq ($(PROJECT),test)
 	SOURCES = $(SOURCES_LIB) \
 	          src/frontend/test/ocamlmerlin_test.ml
 else
+ifeq ($(PROJECT),bench)
+	RESULT = ocamlmerlin-bench
+	
+	SOURCES = $(SOURCES_LIB) \
+	          src/frontend/bench/ocamlmerlin_bench.ml
+else
 	RESULT = ocamlmerlin-server$(RESULT_SUFFIX)
 	
 	SOURCES = $(SOURCES_LIB)                    \
@@ -268,6 +274,7 @@ else
 						src/frontend/new/new_commands.ml  \
 						src/frontend/new/new_merlin.ml    \
 						src/frontend/ocamlmerlin_server.ml
+endif
 endif
 
 ifeq "$(NATIVE)" "false"

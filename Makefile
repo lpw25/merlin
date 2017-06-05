@@ -59,6 +59,9 @@ test: assert_configured
 	 +$(OCAMLMAKEFILE) PROJECT=test
 	 ./ocamlmerlin-test
 
+bench: assert_configured
+	 +$(OCAMLMAKEFILE) PROJECT=bench
+
 preprocess:
 	$(MAKE) -f Makefile.preprocess
 
