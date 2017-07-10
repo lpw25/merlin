@@ -25,6 +25,21 @@ open Types
 open Btype
 open Outcometree
 
+(* Printing environment *)
+let printing_env = ref Env.empty
+
+let set_printing_env env =
+  printing_env :=
+    if !Clflags.real_paths then Env.empty
+    else env
+
+let wrap_printing_env env f =
+  set_printing_env (Env.update_short_paths env);
+  try_finally f (fun () -> set_printing_env Env.empty)
+
+let wrap_printing_env env f =
+  Env.without_cmis (wrap_printing_env env) f
+
 (* Print a long identifier *)
 
 let rec longident ppf = function
@@ -218,22 +233,6 @@ let raw_type_expr ppf t =
 let () = Btype.print_raw := raw_type_expr
 
 (* Normalize paths *)
-
-let printing_env = ref Env.empty
-
-let same_type t t' = repr t == repr t'
-
-let set_printing_env env =
-  printing_env :=
-    if !Clflags.real_paths then Env.empty
-    else env
-
-let wrap_printing_env env f =
-  set_printing_env (Env.update_short_paths env);
-  try_finally f (fun () -> set_printing_env Env.empty)
-
-let wrap_printing_env env f =
-  Env.without_cmis (wrap_printing_env env) f
 
 type type_result = Short_paths.type_result =
   | Nth of int
@@ -1232,6 +1231,8 @@ let signature ppf sg =
   fprintf ppf "%a" print_signature (tree_of_signature sg)
 
 (* Print an unification error *)
+
+let same_type t t' = repr t == repr t'
 
 let same_path t t' =
   let t = repr t and t' = repr t' in
