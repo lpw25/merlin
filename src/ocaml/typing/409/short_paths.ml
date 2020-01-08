@@ -1,5 +1,11 @@
-
 open Short_paths_graph
+
+let tracing = true
+
+let trace fmt =
+  Format.kfprintf
+    (fun ppf -> Format.pp_print_newline ppf ())
+    Format.err_formatter fmt
 
 module Desc = Desc
 
@@ -208,13 +214,22 @@ module Origin_range_tbl = struct
         (fun dep acc ->
            let data = Dependency.Tbl.find t.deps dep in
            Dependency.Tbl.remove t.deps dep;
+           if tracing then begin
+             trace "Popped %i todo items from Dep(%a)"
+               (List.length data) Dependency.pp dep
+           end;
            List.rev_append data acc)
         matching
         []
     in
     let items =
       Age.Map.fold
-        (fun _ data acc -> List.rev_append data acc)
+        (fun age data acc ->
+           if tracing then begin
+             trace "Popped %i todo items from Env(%a)"
+               (List.length data) Age.pp age
+           end;
+           List.rev_append data acc)
         t.envs items
     in
     t.envs <- Age.Map.empty;
@@ -229,7 +244,12 @@ module Origin_range_tbl = struct
     in
     let items =
       Age.Map.fold
-        (fun _ data acc -> List.rev_append data acc)
+        (fun age data acc ->
+           if tracing then begin
+             trace "Popped %i todo items from Env(%a)"
+               (List.length data) Age.pp age
+           end;
+           List.rev_append data acc)
         matching items
     in
     t.envs <- envs;
@@ -320,6 +340,29 @@ module Todo = struct
             decl : Origin.t;
             origin : Origin.t; }
 
+    let pp ppf = function
+      | Base(Diff.Item.Type(id, _, _)) ->
+          Format.fprintf ppf "Base(Type(%a))"
+            Ident.print id
+      | Base(Diff.Item.Class_type(id, _, _)) ->
+          Format.fprintf ppf "Base(Class_type(%a))"
+            Ident.print id
+      | Base(Diff.Item.Module_type(id, _, _)) ->
+          Format.fprintf ppf "Base(Module_type(%a))"
+            Ident.print id
+      | Base(Diff.Item.Module(id, _, _)) ->
+          Format.fprintf ppf "Base(Module(%a))"
+            Ident.print id
+      | Children{path;_} ->
+          Format.fprintf ppf "Children(%a)"
+            Path.print path
+      | Update{id; _} ->
+          Format.fprintf ppf "Update(%a)"
+            Ident.print id
+      | Forward{id; _} ->
+          Format.fprintf ppf "Forward(%a)"
+            Ident.print id
+
   end
 
   type t =
@@ -332,10 +375,18 @@ module Todo = struct
          let origin = Diff.Item.origin graph item in
          match Diff.Item.previous graph item with
          | None ->
+             if tracing then begin
+               trace "Adding todo item %a to %a at height 1"
+                 Item.pp (Item.Base item) Origin.pp origin
+             end;
              Origin_range_tbl.add rev_deps origin (Item.Base item) tbl;
          | Some decl ->
              let id = Diff.Item.id graph item in
              let item = Item.Forward { id; decl; origin } in
+             if tracing then begin
+               trace "Adding todo item %a to %a at height 1\n"
+                 Item.pp item Origin.pp origin
+             end;
              Origin_range_tbl.add rev_deps origin item tbl)
       diff;
     let table = Height.Array.singleton tbl in
@@ -381,6 +432,10 @@ module Todo = struct
          | Some origin ->
              let id = Diff.Item.id graph item in
              let item = Item.Update { id; origin } in
+             if tracing then begin
+               trace "Adding todo item %a to %a at height 1"
+                 Item.pp item Origin.pp origin
+             end;
              Origin_range_tbl.add rev_deps origin item tbl)
       diff
 
@@ -391,10 +446,18 @@ module Todo = struct
          match Diff.Item.previous graph item with
          | None ->
              let origin = Diff.Item.origin graph item in
+             if tracing then begin
+               trace "Adding todo item %a to %a at height 1"
+                 Item.pp (Item.Base item) Origin.pp origin
+             end;
              Origin_range_tbl.add rev_deps origin (Item.Base item) tbl;
          | Some origin ->
              let id = Diff.Item.id graph item in
              let item = Item.Update { id; origin } in
+             if tracing then begin
+               trace "Adding todo item %a to %a at height 1"
+                 Item.pp item Origin.pp origin
+             end;
              Origin_range_tbl.add rev_deps origin item tbl)
       diff
 
@@ -402,18 +465,31 @@ module Todo = struct
     let height = Height.succ height in
     let tbl = get_table t height in
     let origin = Module.origin graph md in
-    Origin_range_tbl.add rev_deps origin (Item.Children{md; path; seen}) tbl
+    let item = Item.Children{md; path; seen} in
+    if tracing then begin
+      trace "Adding todo item %a to %a at height %a"
+        Item.pp item Origin.pp origin Height.pp height
+    end;
+    Origin_range_tbl.add rev_deps origin item tbl
 
   let add_next_update rev_deps t height origin id =
     let height = Height.succ height in
     let tbl = get_table t height in
     let item = Item.Update { id; origin } in
+    if tracing then begin
+      trace "Adding todo item %a to %a"
+        Item.pp item Origin.pp origin
+    end;
     Origin_range_tbl.add rev_deps origin item tbl
 
   let add_next_forward rev_deps t height origin id decl =
     let height = Height.succ height in
     let tbl = get_table t height in
     let item = Item.Forward { id; decl; origin } in
+    if tracing then begin
+      trace "Adding todo item %a to %a"
+        Item.pp item Origin.pp origin
+    end;
     Origin_range_tbl.add rev_deps origin item tbl
 
   let rec is_empty_from rev_deps t height origin =
@@ -458,6 +534,9 @@ module Forward_path_map : sig
   val iter_forwards : (Path.t -> 'a -> unit) -> 'a t -> Ident.t -> unit
 
   val iter_updates : (Path.t -> 'a -> unit) -> 'a t -> Ident.t -> unit
+
+  val print :
+    (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
 
 end = struct
 
@@ -540,6 +619,14 @@ end = struct
              | exception Not_found -> ()
              | paths -> List.iter (f path) paths)
           pset
+
+  let print pp ppf t =
+    Path_map.print
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp)
+      ppf t.new_paths;
+    Path_map.print
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp)
+      ppf t.old_paths;
 
 end
 
@@ -625,6 +712,20 @@ type type_result =
 
 type class_type_result = int list option * Path.t
 
+let print_type_result ppf = function
+  | Nth _ ->
+      Format.fprintf ppf "*nth*"
+  | Path(_, p) ->
+      Path.print ppf p
+
+let print_type_resolution ppf : type_resolution -> unit = function
+  | Nth _ ->
+      Format.fprintf ppf "*nth*"
+  | Subst _ ->
+      Format.fprintf ppf "*subst*"
+  | Id ->
+      Format.fprintf ppf "*id*"
+
 module Shortest = struct
 
   module Section = struct
@@ -682,18 +783,37 @@ module Shortest = struct
 
     let find_type graph t typ =
       let canonical = Type.path graph typ in
+      if tracing then begin
+        trace "Looking in %a for type %a"
+          (Forward_path_map.print Path.print) t.types Path.print canonical
+      end;
       Forward_path_map.find t.types canonical
 
     let find_class_type graph t mty =
       let canonical = Class_type.path graph mty in
+      if tracing then begin
+        trace "Looking in %a for class type %a"
+          (Forward_path_map.print Path.print) t.class_types
+          Path.print canonical
+      end;
       Forward_path_map.find t.class_types canonical
 
     let find_module_type graph t mty =
       let canonical = Module_type.path graph mty in
+      if tracing then begin
+        trace "Looking in %a for module type %a"
+          (Forward_path_map.print Path.print) t.module_types
+          Path.print canonical
+      end;
       Forward_path_map.find t.module_types canonical
 
     let find_module graph t md =
       let canonical = Module.path graph md in
+      if tracing then begin
+        trace "Looking in %a for module %a"
+          (Forward_path_map.print (fun ppf (p, _) -> Path.print ppf p)) t.modules
+          Path.print canonical
+      end;
       Forward_path_map.find t.modules canonical
 
   end
@@ -928,21 +1048,40 @@ module Shortest = struct
       | path :: rest ->
           let visible = Graph.is_type_path_visible graph path in
           if visible then Some path
-          else get_visible_type graph rest
+          else begin
+            if tracing then begin
+              trace "Type path %a is not visible"
+                Path.print path
+            end;
+            get_visible_type graph rest
+          end
 
     let rec get_visible_class_type graph = function
       | [] -> None
       | path :: rest ->
           let visible = Graph.is_class_type_path_visible graph path in
           if visible then Some path
-          else get_visible_class_type graph rest
+          else begin
+            if tracing then begin
+              trace "Class type path %a is not visible"
+                Path.print path
+            end;
+            get_visible_class_type graph rest
+          end
 
     let rec get_visible_module_type graph = function
       | [] -> None
       | path :: rest ->
           let visible = Graph.is_module_type_path_visible graph path in
           if visible then Some path
-          else get_visible_module_type graph rest
+          else begin
+            if tracing then begin
+              trace "Module type path %a is not visible"
+                Path.print path
+            end;
+            get_visible_module_type graph rest
+          end
+
 
     let rec get_visible_module graph = function
       | [] -> None
@@ -965,6 +1104,11 @@ module Shortest = struct
             end
         end
       | None ->
+          if tracing then begin
+            trace "Looking in %a for %a"
+              (Forward_path_map.print Path.print) Forward_path_map.empty
+              Path.print (Type.path graph typ)
+          end;
           if is_finished t then Not_found_here_or_later
           else Not_found_here
 
@@ -982,6 +1126,11 @@ module Shortest = struct
             end
         end
       | None ->
+          if tracing then begin
+            trace "Looking in %a for %a"
+              (Forward_path_map.print Path.print) Forward_path_map.empty
+              Path.print (Class_type.path graph mty)
+          end;
           if is_finished t then Not_found_here_or_later
           else Not_found_here
 
@@ -999,6 +1148,11 @@ module Shortest = struct
             end
         end
       | None ->
+          if tracing then begin
+            trace "Looking in %a for %a"
+              (Forward_path_map.print Path.print) Forward_path_map.empty
+              Path.print (Module_type.path graph mty)
+          end;
           if is_finished t then Not_found_here_or_later
           else Not_found_here
 
@@ -1016,6 +1170,11 @@ module Shortest = struct
             end
         end
       | None ->
+          if tracing then begin
+            trace "Looking in %a for %a"
+              (Forward_path_map.print Path.print) Forward_path_map.empty
+              Path.print (Module.path graph md)
+          end;
           if is_finished t then Not_found_here_or_later
           else Not_found_here
 
@@ -1067,6 +1226,10 @@ module Shortest = struct
           | None -> revision, graph
           | Some revision ->
               let diff = History.Revision.diff revision in
+              if tracing then begin
+                trace "Merging updates from basis in Env(%a) (%i additions)"
+                  Age.pp (age t) (List.length diff)
+              end;
               let graph = Graph.merge graph diff in
               let rev_deps = History.Revision.rev_deps revision in
               Todo.merge graph rev_deps t.todos diff;
@@ -1151,14 +1314,27 @@ module Shortest = struct
       seen (Some Path_set.empty)
 
   let process_type t height path typ =
+    if tracing then begin
+      trace "Processing type path %a"
+        Path.print path
+    end;
     let canonical_path = Type.path t.graph typ in
     if not (Path.equal canonical_path path) then begin
       let origin = Type.origin t.graph typ in
       let sections = sections t origin in
+      if tracing then begin
+        trace "Adding type path %a for %a of sort %a to %a at height %a in Env(%a)"
+          Path.print path Path.print canonical_path Sort.print
+          (Type.sort t.graph typ) Origin.pp origin Height.pp height
+          Age.pp (age t)
+      end;
       Sections.add_type t.graph sections height typ path
     end
 
   let process_module_type t height path mty =
+    if tracing then begin
+      trace "Processing module type path %a" Path.print path
+    end;
     let canonical_path = Module_type.path t.graph mty in
     if not (Path.equal canonical_path path) then begin
       let origin = Module_type.origin t.graph mty in
@@ -1167,6 +1343,9 @@ module Shortest = struct
     end
 
   let process_class_type t height path mty =
+    if tracing then begin
+      trace "Processing class type path %a" Path.print path
+    end;
     let canonical_path = Class_type.path t.graph mty in
     if not (Path.equal canonical_path path) then begin
       let origin = Class_type.origin t.graph mty in
@@ -1175,6 +1354,9 @@ module Shortest = struct
     end
 
   let process_module t height path seen md =
+    if tracing then begin
+      trace "Processing module path %a" Path.print path
+    end;
     let canonical_path = Module.path t.graph md in
     if not (Path.equal canonical_path path) then begin
       let origin = Module.origin t.graph md in
@@ -1187,6 +1369,9 @@ module Shortest = struct
     end
 
   let process_children t height path seen md =
+    if tracing then begin
+      trace "Processing children of %a" Path.print path
+    end;
     let types =
       match Module.types t.graph md with
       | Some types -> types
@@ -1275,54 +1460,112 @@ module Shortest = struct
 
   and process_update : 'k . 'k t -> _ =
     fun t origin height id ->
+      if tracing then begin
+        trace "Processing updated paths from %a at %a with height %a in Env(%a)"
+          Ident.print id Origin.pp origin Height.pp height Age.pp (age t)
+      end;
       let sections = sections t origin in
       let more =
         Sections.iter_updates sections height id
           ~type_:(fun canon path ->
             let typ = Graph.find_type t.graph canon in
+            if tracing then begin
+              trace "Updating %a type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Type.path t.graph typ)
+            end;
             process_type t height path typ)
           ~class_type:(fun canon path ->
             let clty = Graph.find_class_type t.graph canon in
+            if tracing then begin
+              trace "Updating %a class type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Class_type.path t.graph clty)
+            end;
             process_class_type t height path clty)
           ~module_type:(fun canon path ->
             let mty = Graph.find_module_type t.graph canon in
+            if tracing then begin
+              trace "Updating %a module type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Module_type.path t.graph mty)
+            end;
             process_module_type t height path mty)
           ~module_:(fun canon (path, seen) ->
             let md = Graph.find_module t.graph canon in
             match update_seen t seen with
             | None -> ()
             | Some seen ->
+              if tracing then begin
+                trace "Updating %a module path from %a to %a"
+                  Path.print path Path.print canon
+                  Path.print (Module.path t.graph md)
+              end;
               process_module t height path seen md);
       in
       if more then begin
         Todo.add_next_update (rev_deps t) t.todos height origin id
+      end else if tracing then begin
+        trace "No more updated paths from %a"
+          Ident.print id
       end
+
 
 
   and process_forward : 'k . 'k t -> _ =
     fun t origin height id decl ->
+      if tracing then begin
+        trace "Processing forwarded paths from %a \
+               at %a with height %a in Env(%a)"
+          Ident.print id Origin.pp decl
+          Height.pp height Age.pp (age t)
+      end;
       let sections = init t decl height in
       let more =
         Sections.iter_forwards sections height id
           ~type_:(fun canon path ->
             let typ = Graph.find_type t.graph canon in
+            if tracing then begin
+              trace "Forwarding %a type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Type.path t.graph typ)
+            end;
             process_type t height path typ)
           ~class_type:(fun canon path ->
             let clty = Graph.find_class_type t.graph canon in
+            if tracing then begin
+              trace "Forwarding %a class type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Class_type.path t.graph clty)
+            end;
             process_class_type t height path clty)
           ~module_type:(fun canon path ->
             let mty = Graph.find_module_type t.graph canon in
+            if tracing then begin
+              trace "Forwarding %a module type path from %a to %a"
+                Path.print path Path.print canon
+                Path.print (Module_type.path t.graph mty)
+            end;
             process_module_type t height path mty)
           ~module_:(fun canon (path, seen) ->
             let md = Graph.find_module t.graph canon in
             match update_seen t seen with
             | None -> ()
             | Some seen ->
+              if tracing then begin
+                trace "Forwarding %a module path from %a to %a"
+                  Path.print path Path.print canon
+                  Path.print (Module.path t.graph md)
+              end;
               process_module t height path seen md);
       in
       if more then begin
         Todo.add_next_forward (rev_deps t) t.todos height origin id decl
+      end else if tracing then begin
+        trace "No more forwarded paths from %a"
+          Ident.print id
       end
+
 
   and initialise : type k. k t -> _ =
     fun t sections origin height ->
@@ -1330,6 +1573,11 @@ module Shortest = struct
         begin match Height.pred height with
         | None -> ()
         | Some pred -> initialise t sections origin pred
+        end;
+        if tracing then begin
+          trace "Initialising origin %a at height %a in Env(%a)"
+            Origin.pp origin Height.pp height
+            Age.pp (age t)
         end;
         let parent =
           match t.kind with
@@ -1354,6 +1602,10 @@ module Shortest = struct
         begin match Height.pred height with
         | None -> ()
         | Some pred -> ignore (complete t sections origin pred)
+        end;
+        if tracing then begin
+          trace "Forcing origin %a at height %a in Env(%a)"
+            Origin.pp origin Height.pp height Age.pp (age t)
         end;
         let finished = process t origin height in
         if finished then Sections.set_completed_from sections height
@@ -1534,7 +1786,20 @@ module Shortest = struct
       in
       loop kind canonical_path
 
+    let path (type k) graph (kind : k kind) (node : k) =
+      match kind with
+      | Type -> Type.path graph node
+      | Class_type -> Class_type.path graph node
+      | Module_type -> Module_type.path graph node
+      | Module -> Module.path graph node
+
     let find (type k) shortest origin height (kind : k kind) (node : k) =
+      if tracing then begin
+        trace "Searching for %a from %a at height %a in Env(%a)"
+          Path.print (path shortest.graph kind node)
+          Origin.pp origin Height.pp height
+          Age.pp (age shortest)
+      end;
       let sections = force shortest origin height in
       match kind with
       | Type ->
@@ -1770,6 +2035,9 @@ module Basis = struct
       additions
 
   let update_rev_deps t loads =
+    if tracing then begin
+      trace "Extending rev_deps to %a" Dependency.pp t.next_dep
+    end;
     Rev_deps.extend_up_to t.rev_deps t.next_dep;
     List.iter
       (fun { name; depends; alias_depends; _ } ->
@@ -1812,12 +2080,22 @@ module Basis = struct
     | Some shortest ->
         Shortest.mutate shortest t.rev_deps components
 
+  let print_load ppf { name; _ } =
+    Format.fprintf ppf "%s" name
+
   let update t =
     let loads = t.pending_loads in
     let additions = t.pending_additions in
     match loads, String_set.is_empty additions with
     | [], true -> ()
     | _, _ ->
+      if tracing then begin
+        trace "Updating basis (%i loads) (%i additions)"
+          (List.length loads) (String_set.cardinal additions);
+        trace "Loading %a\n%!"
+          (Format.pp_print_list ~pp_sep:Format.pp_print_space print_load)
+          loads
+      end;
       t.pending_loads <- [];
       t.pending_additions <- String_set.empty;
       let loads = List.rev loads in
@@ -1859,6 +2137,9 @@ let rec force t =
   | Initial _ | Forced _ as state -> state
   | Unforced { parent; desc } ->
     let desc = Lazy.force desc in
+    if tracing then begin
+      trace "Forcing environment (%i elements)" (List.length desc)
+    end;
     let state =
       match force parent with
       | Unforced _ -> assert false
@@ -1890,22 +2171,55 @@ let shortest t =
       Shortest shortest
 
 let find_type t path =
+  if tracing then begin
+    trace "\n*********************************";
+    trace "Finding type %a" Path.print path
+  end;
   let Shortest shortest = shortest t in
-  match Shortest.find_type shortest path with
-  | exception Not_found -> Path(None, path)
-  | result -> result
+  let result =
+    match Shortest.find_type shortest path with
+    | exception Not_found -> Path(None, path)
+    | result -> result
+  in
+  if tracing then begin
+    trace "Found %a" print_type_result result;
+    trace "*********************************"
+  end;
+  result
 
 let find_type_resolution t path : type_resolution =
+  if tracing then begin
+    trace "\n*********************************";
+    trace "Finding resolution for type %a" Path.print path
+  end;
   let Shortest shortest = shortest t in
-  match Shortest.find_type_resolution shortest path with
-  | exception Not_found -> Id
-  | subst -> subst
+  let resolution =
+    match Shortest.find_type_resolution shortest path with
+    | exception Not_found -> Id
+    | subst -> subst
+  in
+  if tracing then begin
+    trace "Found %a" print_type_resolution resolution;
+    trace "*********************************"
+  end;
+  resolution
 
 let find_type_simple t path =
+  if tracing then begin
+    trace "\n*********************************";
+    trace "Finding simple path for type %a" Path.print path
+  end;
   let Shortest shortest = shortest t in
-  match Shortest.find_type_simple shortest path with
-  | exception Not_found -> path
-  | path -> path
+  let path =
+    match Shortest.find_type_simple shortest path with
+    | exception Not_found -> path
+    | path -> path
+  in
+  if tracing then begin
+    trace "Found %a" Path.print path;
+    trace "*********************************"
+  end;
+  path
 
 let find_class_type t path =
   let Shortest shortest = shortest t in
@@ -1920,13 +2234,35 @@ let find_class_type_simple t path =
   | path -> path
 
 let find_module_type t path =
+  if tracing then begin
+    trace "\n*********************************";
+    trace "Finding module type %a" Path.print path
+  end;
   let Shortest shortest = shortest t in
-  match Shortest.find_module_type shortest path with
-  | exception Not_found -> path
-  | path -> path
+  let result =
+    match Shortest.find_module_type shortest path with
+    | exception Not_found -> path
+    | path -> path
+  in
+  if tracing then begin
+    trace "Found %a" Path.print result;
+    trace "*********************************"
+  end;
+  result
 
 let find_module t path =
+  if tracing then begin
+    trace "\n*********************************";
+    trace "Finding module %a" Path.print path
+  end;
   let Shortest shortest = shortest t in
-  match Shortest.find_module shortest path with
-  | exception Not_found -> path
-  | path -> path
+  let result =
+    match Shortest.find_module shortest path with
+    | exception Not_found -> path
+    | path -> path
+  in
+  if tracing then begin
+    trace "Found %a" Path.print result;
+    trace "*********************************"
+  end;
+  result

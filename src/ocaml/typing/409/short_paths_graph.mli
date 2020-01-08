@@ -22,11 +22,26 @@ module Ident : sig
 
   val global : string -> t
 
+  val print : Format.formatter -> t -> unit
+
 end
 
-module Ident_map : Map.S with type key = Ident.t
+module Ident_map : sig
 
-module Ident_set : Set.S with type elt = Ident.t
+  include Map.S with type key = Ident.t
+
+  val print :
+    (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
+
+end
+
+module Ident_set : sig
+
+  include Set.S with type elt = Ident.t
+
+  val print : Format.formatter -> t -> unit
+
+end
 
 module Path : sig
 
@@ -39,11 +54,27 @@ module Path : sig
 
   val compare : t -> t -> int
 
+  val print : Format.formatter -> t -> unit
+
 end
 
-module Path_map : Map.S with type key = Path.t
+module Path_map : sig
 
-module Path_set : Set.S with type elt = Path.t
+  include Map.S with type key = Path.t
+
+  val print :
+    (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
+
+end
+
+module Path_set : sig
+
+  include Set.S with type elt = Path.t
+
+  val print : Format.formatter -> t -> unit
+
+end
+
 
 (* Subset of the type algebra that is relevant to short path *)
 
@@ -131,6 +162,8 @@ module Sort : sig
     | Defined
     | Declared of Ident_set.t
 
+  val print : Format.formatter -> t -> unit
+
 end
 
 module Age : Natural.S
@@ -147,6 +180,8 @@ module Origin : sig
   val equal : t -> t -> bool
 
   val hash : t -> int
+
+  val pp : Format.formatter -> t -> unit
 
 end
 

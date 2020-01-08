@@ -1,4 +1,11 @@
 
+let tracing = true
+
+let trace fmt =
+  Format.kfprintf
+    (fun ppf -> Format.pp_print_newline ppf ())
+    Format.err_formatter fmt
+
 module String_map = Misc.String.Map
 
 module Ident = struct
@@ -14,10 +21,36 @@ module Ident = struct
   let global name =
     Ident.create_persistent name
 
+  let print ppf t =
+    Format.fprintf ppf "%s"
+      (Ident.unique_toplevel_name t)
+
 end
 
-module Ident_map = Map.Make(Ident)
-module Ident_set = Set.Make(Ident)
+module Ident_map = struct
+
+  include Map.Make(Ident)
+
+  let print f ppf s =
+    let print_elements ppf s =
+      iter (fun id v ->
+        Format.fprintf ppf "@ (@[%a@ %a@])" Ident.print id f v) s
+    in
+    Format.fprintf ppf "@[<1>{@[%a@ @]}@]" print_elements s
+
+end
+
+module Ident_set = struct
+
+  include Set.Make(Ident)
+
+  let print ppf s =
+    let print_elements ppf s =
+      iter (fun e -> Format.fprintf ppf "@ %a" Ident.print e) s
+    in
+    Format.fprintf ppf "@[<1>{@[%a@ @]}@]" print_elements s
+
+end
 
 module Path = struct
 
@@ -62,10 +95,40 @@ module Path = struct
         if c <> 0 then c
         else compare arg1 arg2
 
+  let rec print ppf = function
+    | Pident id ->
+        Format.fprintf ppf "%a" Ident.print id
+    | Pdot(parent, name) ->
+        Format.fprintf ppf "%a.%s" print parent name
+    | Papply(parent, name) ->
+        Format.fprintf ppf "%a(%a)" print parent print name
+
 end
 
-module Path_map = Map.Make(Path)
-module Path_set = Set.Make(Path)
+module Path_map = struct
+
+  include Map.Make(Path)
+
+  let print f ppf s =
+    let print_elements ppf s =
+      iter (fun id v ->
+        Format.fprintf ppf "@ (@[%a@ %a@])" Path.print id f v) s
+    in
+    Format.fprintf ppf "@[<1>{@[%a@ @]}@]" print_elements s
+
+end
+
+module Path_set = struct
+
+  include Set.Make(Path)
+
+  let print ppf s =
+    let print_elements ppf s =
+      iter (fun e -> Format.fprintf ppf "@ %a" Path.print e) s
+    in
+    Format.fprintf ppf "@[<1>{@[%a@ @]}@]" print_elements s
+
+end
 
 module Desc = struct
 
@@ -149,6 +212,13 @@ module Sort = struct
     | Declared _, Defined -> t1
     | Declared ids1, Declared ids2 -> Declared (Ident_set.union ids1 ids2)
 
+  let print ppf = function
+    | Defined ->
+        Format.fprintf ppf "Defined"
+    | Declared ids ->
+        Format.fprintf ppf "Declared(%a)"
+          Ident_set.print ids
+
 end
 
 module Age = Natural.Make()
@@ -229,6 +299,14 @@ module Origin = struct
 
   let hash = Hashtbl.hash
 
+  let pp ppf = function
+    | Dependency dep ->
+        Format.fprintf ppf "Dep(%a)" Dependency.pp dep
+    | Dependencies deps ->
+        Format.fprintf ppf "Deps(%a)"
+          (Format.pp_print_list Dependency.pp) deps
+    | Environment age ->
+        Format.fprintf ppf "Env(%a)" Age.pp age
 end
 
 let hidden_name name =
@@ -1246,6 +1324,10 @@ end = struct
           let item = Diff.Item.Type(id, typ, prev) in
           let diff = item :: diff in
           let acc = { acc with types; type_names } in
+          if tracing then begin
+            trace "Adding type %a to graph"
+              Ident.print id
+          end;
           loop acc diff declarations rest
       | Component.Class_type(origin,id, desc, source, dpr) :: rest ->
           let prev = previous_class_type acc id in
@@ -1255,6 +1337,10 @@ end = struct
           let item = Diff.Item.Class_type(id, clty, prev) in
           let diff = item :: diff in
           let acc = { acc with class_types; class_type_names } in
+          if tracing then begin
+            trace "Adding class type %a to graph"
+              Ident.print id
+          end;
           loop acc diff declarations rest
       | Component.Module_type(origin,id, desc, source, dpr) :: rest ->
           let prev = previous_module_type acc id in
@@ -1264,6 +1350,10 @@ end = struct
           let item = Diff.Item.Module_type(id, mty, prev) in
           let diff = item :: diff in
           let acc = { acc with module_types; module_type_names } in
+          if tracing then begin
+            trace "Adding module type %a to graph"
+              Ident.print id
+          end;
           loop acc diff declarations rest
       | Component.Module(origin,id, desc, source, dpr) :: rest ->
           let prev = previous_module acc id in
@@ -1273,6 +1363,10 @@ end = struct
           let item = Diff.Item.Module(id, md, prev) in
           let diff = item :: diff in
           let acc = { acc with modules; module_names } in
+          if tracing then begin
+            trace "Adding module %a to graph"
+              Ident.print id
+          end;
           loop acc diff declarations rest
       | Component.Declare_type(_, id) as decl :: rest ->
           let declarations = decl :: declarations in
@@ -1315,6 +1409,10 @@ end = struct
             let typ = Type.declare origin id in
             let types = Ident_map.add id typ acc.types in
             let acc = { acc with types } in
+            if tracing then begin
+              trace "Declaring type %a in graph"
+                Ident.print id
+            end;
             loop_declarations acc diff rest
           end
       | Component.Declare_class_type(origin, id) :: rest ->
@@ -1324,6 +1422,10 @@ end = struct
             let clty = Class_type.declare origin id in
             let class_types = Ident_map.add id clty acc.class_types in
             let acc = { acc with class_types } in
+            if tracing then begin
+              trace "Declaring class type %a in graph"
+                Ident.print id
+            end;
             loop_declarations acc diff rest
           end
       | Component.Declare_module_type(origin, id) :: rest ->
@@ -1333,6 +1435,10 @@ end = struct
             let mty = Module_type.declare origin id in
             let module_types = Ident_map.add id mty acc.module_types in
             let acc = { acc with module_types } in
+            if tracing then begin
+              trace "Declaring module type %a in graph"
+                Ident.print id
+            end;
             loop_declarations acc diff rest
           end
       | Component.Declare_module(origin, id) :: rest ->
@@ -1342,6 +1448,10 @@ end = struct
             let md = Module.declare origin id in
             let modules = Ident_map.add id md acc.modules in
             let acc = { acc with modules } in
+            if tracing then begin
+              trace "Declaring module %a in graph"
+                Ident.print id
+            end;
             loop_declarations acc diff rest
           end
       | ( Component.Type _
@@ -1358,21 +1468,37 @@ end = struct
           let types = Ident_map.add id typ acc.types in
           let type_names = merge_name id acc.type_names in
           let acc = { acc with types; type_names } in
+          if tracing then begin
+            trace "Merging type %a into graph"
+              Ident.print id
+          end;
           loop acc rest
       | Diff.Item.Class_type(id, clty, _) :: rest ->
           let class_types = Ident_map.add id clty acc.class_types in
           let class_type_names = merge_name id acc.class_type_names in
           let acc = { acc with class_types; class_type_names } in
+          if tracing then begin
+            trace "Merging class type %a into graph"
+              Ident.print id
+          end;
           loop acc rest
       | Diff.Item.Module_type(id, mty, _) :: rest ->
           let module_types = Ident_map.add id mty acc.module_types in
           let module_type_names = merge_name id acc.module_type_names in
           let acc = { acc with module_types; module_type_names } in
+          if tracing then begin
+            trace "Merging module type %a into graph"
+              Ident.print id
+          end;
           loop acc rest
       | Diff.Item.Module(id, md, _) :: rest ->
           let modules = Ident_map.add id md acc.modules in
           let module_names = merge_name id acc.module_names in
           let acc = { acc with modules; module_names } in
+          if tracing then begin
+            trace "Merging module %a into graph"
+              Ident.print id
+          end;
           loop acc rest
     in
     loop t diff
