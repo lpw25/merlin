@@ -33,6 +33,9 @@ module Dir = struct
 
   let create path =
     { path; files = Array.to_list (Directory_content_cache.read path) }
+
+  let check t = Directory_content_cache.check t.path
+
 end
 
 let dirs = s_ref []
@@ -56,6 +59,37 @@ let add dir =
   List.iter add_file dir.Dir.files;
   dirs := dir :: !dirs
 
+let add_dir dir = add (Dir.create dir)
+
+let init l =
+  let rec loop_changed acc = function
+    | [] -> Some acc
+    | new_path :: new_rest ->
+      loop_changed (Dir.create new_path :: acc) new_rest
+  in
+  let rec loop_unchanged acc new_paths old_dirs =
+    match new_paths, old_dirs with
+    | [], [] -> None
+    | new_path :: new_rest, [] ->
+      loop_changed (Dir.create new_path :: acc) new_rest
+    | [], _ :: _ -> Some acc
+    | new_path :: new_rest, old_dir :: old_rest ->
+      if String.equal new_path (Dir.path old_dir) then begin
+        if Dir.check old_dir then begin
+          loop_unchanged (old_dir :: acc) new_rest old_rest
+        end else begin
+          loop_changed (Dir.create new_path :: acc) new_rest
+        end
+      end else begin
+        loop_changed (Dir.create new_path :: acc) new_rest
+      end
+  in
+  match loop_unchanged [] l !dirs with
+  | None -> ()
+  | Some new_dirs ->
+    reset ();
+    List.iter add new_dirs
+
 let remove_dir dir =
   assert (Local_store.is_bound ());
   let new_dirs = List.filter (fun d -> Dir.path d <> dir) !dirs in
@@ -63,12 +97,6 @@ let remove_dir dir =
     reset ();
     List.iter add (List.rev new_dirs)
   end
-
-let add_dir dir = add (Dir.create dir)
-
-let init l =
-  reset ();
-  List.iter add_dir (List.rev l)
 
 let is_basename fn = Filename.basename fn = fn
 
