@@ -12,15 +12,15 @@
 (*                                                                        *)
 (**************************************************************************)
 
-module SMap = Misc.String.Map
+module STbl = Misc.String.Tbl
 
 (* Mapping from basenames to full filenames *)
-type registry = string SMap.t ref
+type registry = string STbl.t
 
 open Local_store
 
-let files : registry = s_ref SMap.empty
-let files_uncap : registry = s_ref SMap.empty
+let files : registry ref = s_table STbl.create 42
+let files_uncap : registry ref = s_table STbl.create 42
 
 module Dir = struct
   type t = {
@@ -39,8 +39,8 @@ let dirs = s_ref []
 
 let reset () =
   assert (Local_store.is_bound ());
-  files := SMap.empty;
-  files_uncap := SMap.empty;
+  STbl.clear !files;
+  STbl.clear !files_uncap;
   dirs := []
 
 let get () = !dirs
@@ -50,8 +50,8 @@ let add dir =
   assert (Local_store.is_bound ());
   let add_file base =
     let fn = Filename.concat dir.Dir.path base in
-    files := SMap.add base fn !files;
-    files_uncap := SMap.add (String.uncapitalize_ascii base) fn !files_uncap;
+    STbl.replace !files base fn;
+    STbl.replace !files_uncap (String.uncapitalize_ascii base) fn
   in
   List.iter add_file dir.Dir.files;
   dirs := dir :: !dirs
@@ -74,14 +74,16 @@ let is_basename fn = Filename.basename fn = fn
 
 let find fn =
   assert (Local_store.is_bound ());
-  if is_basename fn then
-    SMap.find fn !files
-  else
+  if is_basename fn then begin
+    STbl.find !files fn
+  end else begin
     Misc.find_in_path (get_paths ()) fn
+  end
 
 let find_uncap fn =
   assert (Local_store.is_bound ());
-  if is_basename fn then
-    SMap.find (String.uncapitalize_ascii fn) !files_uncap
-  else
+  if is_basename fn then begin
+    STbl.find !files_uncap (String.uncapitalize_ascii fn)
+  end else begin
     Misc.find_in_path_uncap (get_paths ()) fn
+  end
